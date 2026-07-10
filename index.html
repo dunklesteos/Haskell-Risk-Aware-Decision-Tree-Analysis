@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Dynamic Risk Tree Visualizer & Analyzer</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f4f6f9; color: #333; padding: 20px; margin: 0; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: #2c3e50; margin-bottom: 20px; font-size: 28px; }
+        .control-panel { background: #f8f9fa; padding: 15px; border-radius: 6px; border-left: 5px solid #3498db; margin-bottom: 20px; display: flex; align-items: center; gap: 20px; }
+        .slider-group { flex: 1; }
+        label { font-weight: bold; display: block; margin-bottom: 5px; color: #34495e; }
+        .value-display { font-size: 20px; color: #e74c3c; font-weight: bold; }
+        .main-layout { display: grid; grid-template-columns: 1fr; gap: 20px; }
+        .visualizer-card { background: #2c3e50; padding: 20px; border-radius: 8px; position: relative; min-height: 550px; display: flex; flex-direction: column; }
+        .visualizer-card h2 { color: #ecf0f1; margin-top: 0; font-size: 18px; border-bottom: 1px solid #34495e; padding-bottom: 10px; }
+        canvas { background: #34495e; border-radius: 6px; width: 100%; cursor: grab; }
+        canvas:active { cursor: grabbing; }
+        .haskell-output { background: #eef2f3; padding: 12px; border-radius: 6px; font-family: 'Courier New', Courier, monospace; font-size: 13px; color: #2c3e50; border: 1px solid #b2bec3; word-break: break-all; margin-top: 15px; }
+        .haskell-output strong { color: #d63031; }
+        .node-editor-overlay { position: absolute; background: rgba(255, 255, 255, 0.96); border: 2px solid #2c3e50; border-radius: 6px; padding: 10px; display: none; box-shadow: 0 4px 10px rgba(0,0,0,0.3); z-index: 100; color: #333; width: 220px; }
+        .node-editor-overlay h4 { margin: 0 0 8px 0; color: #2c3e50; font-size: 14px; border-bottom: 1px solid #ccc; padding-bottom: 3px; }
+        .btn-stack { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+        .btn-stack button { padding: 6px; border: none; border-radius: 4px; color: white; font-weight: bold; cursor: pointer; font-size: 11px; text-transform: uppercase; }
+        .btn-dec { background: #3498db; }
+        .btn-ch { background: #e67e22; }
+        .btn-lf { background: #2ecc71; }
+        .btn-del { background: #e74c3c; }
+        .input-inline { display: flex; align-items: center; gap: 5px; margin: 4px 0; font-size: 12px; }
+        .input-inline input { width: 70px; padding: 2px; }
+        .legend { display: flex; gap: 15px; justify-content: center; margin-top: 10px; color: #fff; font-size: 12px; }
+        .legend-item { display: flex; align-items: center; gap: 5px; }
+        .dot { width: 12px; height: 12px; border-radius: 2px; }
+        .controls-hint { text-align: center; color: #bdc3c7; font-size: 11px; margin-top: 5px; font-style: italic; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Interactive Risk Tree Builder & Sub-Tree Analyzer</h1>
+
+    <div class="control-panel">
+        <div class="slider-group">
+            <label for="lambdaRange">Global Risk Aversion Parameter (Lambda - λ)</label>
+            <input type="range" id="lambdaRange" min="0" max="2" step="0.1" value="0.5" style="width:100%;" oninput="updateLambda(this.value)">
+        </div>
+        <div>
+            <div class="value-display" id="lambdaVal">λ = 0.5</div>
+        </div>
+    </div>
+
+    <div class="main-layout">
+        <div class="visualizer-card">
+            <h2>Tree Canvas (Click a node to edit/grow. Drag empty space to pan. Scroll wheel to zoom.)</h2>
+            
+            <canvas id="treeCanvas" width="1150" height="500"></canvas>
+            <div class="controls-hint">💡 Pro-Tip: Left click and drag background to pan | Scroll mouse wheel to zoom in/out</div>
+            
+            <div class="legend">
+                <div class="legend-item"><div class="dot" style="background:#3498db;"></div> Decision Node (Min Risk Path)</div>
+                <div class="legend-item"><div class="dot" style="background:#e67e22;"></div> Chance Node (Mean + λ*Var)</div>
+                <div class="legend-item"><div class="dot" style="background:#2ecc71;"></div> Leaf Node (Base Cost Value)</div>
+            </div>
+
+            <div class="haskell-output">
+                <strong>Haskell Native Data Structure Representation:</strong> <span id="haskellStr">-</span>
+            </div>
+
+            <div id="nodeEditor" class="node-editor-overlay">
+                <h4 id="editorTitle">Edit Node</h4>
+                <div id="editorContent"></div>
+                <div class="btn-stack">
+                    <button class="btn-dec" onclick="transformNode('Decision')">To Decision Node</button>
+                    <button class="btn-ch" onclick="transformNode('Chance')">To Chance Node</button>
+                    <button class="btn-lf" onclick="transformNode('Leaf')">To Leaf Node</button>
+                    <button class="btn-del" id="deleteBtn" onclick="deleteBranch()">Delete Branch</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let activeTree = {
+    id: 1,
+    type: 'Chance',
+    prob: 0.6,
+    left: { id: 2, type: 'Leaf', value: 10.0 },
+    right: {
+        id: 3,
+        type: 'Decision',
+        left: { id: 4, type: 'Leaf', value: 5.0 },
+        right: { id: 5, type: 'Leaf', value: 12.0 }
+    }
+};
+
+let globalLambda = 0.5;
+let selectedNode = null;
+let nodeClickRegions = [];
+let nextId = 10;
+
+// Camera state parameters for Panning and Zooming
+let camera = {
+    x: 0,
+    y: 0,
+    zoom: 1.0,
+    isDragging: false,
+    startX: 0,
+    startY: 0
+};
+
+function updateLambda(val) {
+    globalLambda = parseFloat(val);
+    document.getElementById('lambdaVal').innerText = "λ = " + val;
+    renderAll();
+}
+
+function computeMetrics(node) {
+    if (!node) return { cost: 0, height: 0, dCount: 0, cCount: 0 };
+    if (node.type === 'Leaf') return { cost: parseFloat(node.value || 0), height: 0, dCount: 0, cCount: 0 };
+    
+    let leftMetrics = computeMetrics(node.left);
+    let rightMetrics = computeMetrics(node.right);
+    let currentHeight = 1 + Math.max(leftMetrics.height, rightMetrics.height);
+    
+    if (node.type === 'Decision') {
+        return {
+            cost: Math.min(leftMetrics.cost, rightMetrics.cost),
+            height: currentHeight,
+            dCount: 1 + leftMetrics.dCount + rightMetrics.dCount,
+            cCount: leftMetrics.cCount + rightMetrics.cCount
+        };
+    }
+    
+    if (node.type === 'Chance') {
+        let p = parseFloat(node.prob || 0);
+        let l = leftMetrics.cost;
+        let r = rightMetrics.cost;
+        let mean = p * l + (1 - p) * r;
+        let variance = p * Math.pow(l - mean, 2) + (1 - p) * Math.pow(r - mean, 2);
+        return {
+            cost: mean + (globalLambda * variance),
+            height: currentHeight,
+            dCount: leftMetrics.dCount + rightMetrics.dCount,
+            cCount: 1 + leftMetrics.cCount + rightMetrics.cCount
+        };
+    }
+}
+
+function generateHaskellString(node) {
+    if (!node) return "";
+    if (node.type === 'Leaf') return `(Leaf ${parseFloat(node.value).toFixed(1)})`;
+    if (node.type === 'Decision') return `(DecisionNode ${generateHaskellString(node.left)} ${generateHaskellString(node.right)})`;
+    if (node.type === 'Chance') return `(ChanceNode ${parseFloat(node.prob).toFixed(1)} ${generateHaskellString(node.left)} ${generateHaskellString(node.right)})`;
+}
+
+function renderAll() {
+    const canvas = document.getElementById('treeCanvas');
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    ctx.save();
+    // Apply camera Pan and Zoom transformations matrix
+    ctx.translate(canvas.width / 2 + camera.x, 50 + camera.y);
+    ctx.scale(camera.zoom, camera.zoom);
+    
+    nodeClickRegions = [];
+    // Draw the infinite graph structure centered at transformed coordinates (0, 0)
+    drawTree(ctx, activeTree, 0, 0, canvas.width / 4, 90);
+    
+    ctx.restore();
+    document.getElementById('haskellStr').innerText = generateHaskellString(activeTree);
+}
+
+function drawTree(ctx, node, x, y, horizSpace, vertSpace) {
+    if (!node) return;
+    let metrics = computeMetrics(node);
+    
+    ctx.strokeStyle = "#7f8c8d";
+    ctx.lineWidth = 2;
+    
+    if (node.left) {
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - horizSpace, y + vertSpace); ctx.stroke();
+        drawTree(ctx, node.left, x - horizSpace, y + vertSpace, horizSpace / 1.7, vertSpace);
+    }
+    if (node.right) {
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + horizSpace, y + vertSpace); ctx.stroke();
+        drawTree(ctx, node.right, x + horizSpace, y + vertSpace, horizSpace / 1.7, vertSpace);
+    }
+    
+    // Cache bounds for UI pointer resolution calculations
+    nodeClickRegions.push({ node: node, canvasX: x, canvasY: y, r: 24 });
+    
+    ctx.beginPath();
+    if (node.type === 'Leaf') {
+        ctx.arc(x, y, 22, 0, 2 * Math.PI); ctx.fillStyle = "#2ecc71"; ctx.fill();
+        ctx.fillStyle = "white"; ctx.font = "bold 11px Arial"; ctx.textAlign = "center";
+        ctx.fillText("V:" + node.value, x, y + 4);
+    } else if (node.type === 'Decision') {
+        ctx.rect(x - 24, y - 20, 48, 40); ctx.fillStyle = "#3498db"; ctx.fill();
+        ctx.fillStyle = "white"; ctx.font = "bold 11px Arial"; ctx.textAlign = "center";
+        ctx.fillText("DECISION", x, y + 4);
+    } else if (node.type === 'Chance') {
+        ctx.arc(x, y, 24, 0, 2 * Math.PI); ctx.fillStyle = "#e67e22"; ctx.fill();
+        ctx.fillStyle = "white"; ctx.font = "bold 11px Arial"; ctx.textAlign = "center";
+        ctx.fillText("p: " + node.prob, x, y + 4);
+    }
+    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2; ctx.stroke();
+    
+    ctx.fillStyle = "#ebf1f5"; ctx.font = "10px monospace"; ctx.textAlign = "center";
+    let analysisText = `Cost:${metrics.cost.toFixed(2)} | H:${metrics.height}`;
+    ctx.fillText(analysisText, x, node.type==='Decision'? y - 25 : y - 28);
+}
+
+// Advanced Multi-Gesture Mouse Event Listeners for Infinite Infinite Layout Pan & Zoom
+const canvas = document.getElementById('treeCanvas');
+
+canvas.addEventListener('mousedown', function(e) {
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    
+    // Check hit test against scaled and translated matrix values
+    let clickedNode = null;
+    for (let reg of nodeClickRegions) {
+        // Reverse translate click to local node space coords
+        let worldX = reg.canvasX * camera.zoom + canvas.width / 2 + camera.x;
+        let worldY = reg.canvasY * camera.zoom + 50 + camera.y;
+        let dist = Math.sqrt(Math.pow(mouseX - worldX, 2) + Math.pow(mouseY - worldY, 2));
+        if (dist <= reg.r * camera.zoom) {
+            clickedNode = reg.node;
+            break;
+        }
+    }
+    
+    if (clickedNode) {
+        openEditor(clickedNode, e.clientX, e.clientY);
+    } else {
+        document.getElementById('nodeEditor').style.display = 'none';
+        camera.isDragging = true;
+        camera.startX = e.clientX - camera.x;
+        camera.startY = e.clientY - camera.y;
+    }
+});
+
+canvas.addEventListener('mousemove', function(e) {
+    if (!camera.isDragging) return;
+    camera.x = e.clientX - camera.startX;
+    camera.y = e.clientY - camera.startY;
+    renderAll();
+});
+
+window.addEventListener('mouseup', function() {
+    camera.isDragging = false;
+});
+
+// Dynamic Zoom mapping hooked to cross-browser Wheel Event
+canvas.addEventListener('wheel', function(e) {
+    e.preventDefault();
+    const zoomFactor = 1.1;
+    if (e.deltaY < 0) {
+        camera.zoom = Math.min(camera.zoom * zoomFactor, 3.0); // max zoom inside
+    } else {
+        camera.zoom = Math.max(camera.zoom / zoomFactor, 0.3); // max zoom out
+    }
+    renderAll();
+}, { passive: false });
+
+function openEditor(node, screenX, screenY) {
+    selectedNode = node;
+    const editor = document.getElementById('nodeEditor');
+    editor.style.display = 'block';
+    editor.style.left = (screenX + 10) + 'px';
+    editor.style.top = (screenY - 50) + 'px';
+    
+    document.getElementById('editorTitle').innerText = "Node (" + node.type + ")";
+    
+    let contentHtml = "";
+    if (node.type === 'Leaf') {
+        contentHtml = `<div class="input-inline"><label>Cost Value:</label><input type="number" step="0.5" value="${node.value}" onchange="updateNodeValue('value', this.value)"></div>`;
+    } else if (node.type === 'Chance') {
+        contentHtml = `<div class="input-inline"><label>Prob (p):</label><input type="number" min="0" max="1" step="0.1" value="${node.prob}" onchange="updateNodeValue('prob', this.value)"></div>`;
+    } else {
+        contentHtml = "<p style='font-size:11px;color:#666;margin:5px 0;'>Automatically branches left & right.</p>";
+    }
+    document.getElementById('editorContent').innerHTML = contentHtml;
+    document.getElementById('deleteBtn').style.display = node.id === activeTree.id ? 'none' : 'block';
+}
+
+function updateNodeValue(field, val) {
+    if (!selectedNode) return;
+    selectedNode[field] = parseFloat(val);
+    renderAll();
+}
+
+function transformNode(newType) {
+    if (!selectedNode) return;
+    selectedNode.type = newType;
+    if (newType === 'Leaf') {
+        selectedNode.value = 10.0;
+        delete selectedNode.left; delete selectedNode.right; delete selectedNode.prob;
+    } else if (newType === 'Decision') {
+        selectedNode.left = { id: nextId++, type: 'Leaf', value: 5.0 };
+        selectedNode.right = { id: nextId++, type: 'Leaf', value: 5.0 };
+        delete selectedNode.value; delete selectedNode.prob;
+    } else if (newType === 'Chance') {
+        selectedNode.prob = 0.5;
+        selectedNode.left = { id: nextId++, type: 'Leaf', value: 5.0 };
+        selectedNode.right = { id: nextId++, type: 'Leaf', value: 5.0 };
+        delete selectedNode.value;
+    }
+    document.getElementById('nodeEditor').style.display = 'none';
+    renderAll();
+}
+
+function deleteBranch() {
+    if (!selectedNode || selectedNode.id === activeTree.id) return;
+    function removeRecursive(parent) {
+        if (!parent) return;
+        if (parent.left && parent.left.id === selectedNode.id) { parent.left = { id: nextId++, type: 'Leaf', value: 0.0 }; return; }
+        if (parent.right && parent.right.id === selectedNode.id) { parent.right = { id: nextId++, type: 'Leaf', value: 0.0 }; return; }
+        removeRecursive(parent.left); removeRecursive(parent.right);
+    }
+    removeRecursive(activeTree);
+    document.getElementById('nodeEditor').style.display = 'none';
+    renderAll();
+}
+
+window.onload = function() {
+    renderAll();
+};
+</script>
+
+</body>
+</html>
