@@ -152,6 +152,7 @@ This option has very low uncertainty.
 This option has a much larger variance.
 
 ---
+<img width="1293" height="858" alt="image" src="https://github.com/user-attachments/assets/6b16c831-30c4-426a-bece-d3f2c03b9b78" />
 
 The program evaluates both alternatives.
 
